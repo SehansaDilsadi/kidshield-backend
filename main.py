@@ -1,10 +1,18 @@
 from fastapi import FastAPI
-from api.routes import router
+from pydantic import BaseModel
+from ai_model.predictor import predict_risk
 
 app = FastAPI()
 
-app.include_router(router)
+class SearchQuery(BaseModel):
+    query: str
 
-@app.get("/")
-def home():
-    return {"message": "KidShield Backend Running"}
+@app.post("/analyze")
+def analyze(data: SearchQuery):
+
+    result = predict_risk(data.query)
+
+    return {
+        "query": data.query,
+        "prediction": result
+    }
