@@ -1,13 +1,9 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from transformers import pipeline
+
+from ai_model.predictor import predict_risk
 
 app = FastAPI()
-
-classifier = pipeline(
-    "text-classification",
-    model="unitary/toxic-bert"
-)
 
 class QueryRequest(BaseModel):
     query: str
@@ -17,20 +13,24 @@ async def analyze_query(data: QueryRequest):
 
     query = data.query
 
-    result = classifier(query)
+    result = predict_risk(query)
 
-    label = result[0]["label"]
-    confidence = round(result[0]["score"] * 100, 2)
+    label = result["label"]
 
-    # Risk Level Logic
-    if confidence <= 40:
+    confidence = round(result["score"] * 100, 2)
+
+    # Risk level
+    if label == "Safe":
         risk_level = "Low"
-    elif confidence <= 75:
+    elif label == "Toxic":
         risk_level = "Medium"
-    else:
+    elif label == "Cyberbullying":
         risk_level = "High"
+    elif label == "Hate Speech":
+        risk_level = "High"
+    else:
+        risk_level = "Medium"
 
-    # Explanation Logic
     explanation = generate_explanation(label)
 
     return {
@@ -44,11 +44,10 @@ async def analyze_query(data: QueryRequest):
 def generate_explanation(label):
 
     explanations = {
-        "toxic": "The query contains toxic or offensive language.",
-        "insult": "The query may contain insulting language.",
-        "threat": "The query may contain threatening language.",
-        "obscene": "The query may contain inappropriate language.",
-        "identity_hate": "The query may contain hateful content."
+        "Safe": "The search appears safe.",
+        "Toxic": "The search contains offensive language.",
+        "Cyberbullying": "The search may contain bullying or harassment.",
+        "Hate Speech": "The search may contain hateful content."
     }
 
     return explanations.get(
