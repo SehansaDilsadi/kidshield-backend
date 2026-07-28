@@ -7,6 +7,7 @@ from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 
 from ai_model.predictor import predict_risk
+from ai_model.explainability import analyze_with_xai
 
 app = FastAPI(title="KidShield AI Search Monitoring Service")
 
@@ -24,6 +25,8 @@ class EmailRequest(BaseModel):
     risk_level: str
     confidence: float
     explanation: str
+    key_words: Optional[str] = ""
+    suggested_action: Optional[str] = ""
 
 def send_parent_email_alert(
     parent_email: str,
@@ -32,35 +35,41 @@ def send_parent_email_alert(
     category: str,
     risk_level: str,
     confidence: float,
-    explanation: str
+    explanation: str,
+    key_words: str = "",
+    suggested_action: str = "",
 ) -> bool:
-    """Send an email alert to the parent email address when a search query is analyzed."""
+    """Send an immediate email alert for HIGH risk searches."""
     smtp_server = os.getenv("SMTP_SERVER", "")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USERNAME", "")
     smtp_pass = os.getenv("SMTP_PASSWORD", "")
     sender_email = os.getenv("SENDER_EMAIL", "alerts@kidshield.app")
 
-    subject = f"[KidShield Alert] Search Detected: {query} ({category})"
-    
+    border_color = "#FF7675" if risk_level == "High" else "#FDCB6E" if risk_level == "Medium" else "#00B894"
+    subject = f"[KidShield HIGH RISK] Search Detected: {query}"
+
     html_body = f"""
     <html>
       <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px;">
         <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #e0e0e0;">
-          <h2 style="color: #6C5CE7; margin-top: 0;">🛡️ KidShield Search Alert</h2>
+          <h2 style="color: #FF7675; margin-top: 0;">HIGH RISK SEARCH DETECTED</h2>
           <p>Hello,</p>
-          <p>A new web search was conducted on your linked child account <strong>{child_name}</strong>.</p>
-          
-          <div style="background-color: #f9f9fb; border-left: 4px solid {'#FF7675' if risk_level == 'High' else '#FDCB6E' if risk_level == 'Medium' else '#00B894'}; padding: 16px; margin: 16px 0; border-radius: 4px;">
+          <p>A concerning web search was detected on your linked child account <strong>{child_name}</strong>.</p>
+
+          <div style="background-color: #fff5f5; border-left: 4px solid {border_color}; padding: 16px; margin: 16px 0; border-radius: 4px;">
             <p style="margin: 0 0 8px 0;"><strong>Search Query:</strong> "{query}"</p>
-            <p style="margin: 0 0 8px 0;"><strong>AI Dataset Category:</strong> <span style="background: #eef; padding: 2px 8px; border-radius: 4px; font-weight: bold;">{category}</span></p>
-            <p style="margin: 0 0 8px 0;"><strong>Risk Level:</strong> {risk_level} ({confidence}%)</p>
-            <p style="margin: 0;"><strong>Explanation:</strong> {explanation}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Category:</strong> {category}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Confidence:</strong> {confidence}%</p>
+            <p style="margin: 0 0 8px 0;"><strong>Risk Level:</strong> {risk_level}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Key Words:</strong> {key_words or "—"}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Explanation:</strong> {explanation}</p>
+            <p style="margin: 0;"><strong>Suggested Action:</strong> {suggested_action or "Review this search with your child."}</p>
           </div>
-          
-          <p style="color: #666; font-size: 13px;">This alert is recorded in your KidShield Parent Account ({parent_email}).</p>
+
+          <p style="color: #666; font-size: 13px;">This alert is recorded in your KidShield Parent Account ({parent_email}). Open the app to review full search history.</p>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="color: #999; font-size: 11px;">KidShield Parental Controls & Child Safety AI</p>
+          <p style="color: #999; font-size: 11px;">KidShield Parental Controls &amp; Child Safety AI</p>
         </div>
       </body>
     </html>
@@ -78,42 +87,42 @@ def send_parent_email_alert(
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(sender_email, parent_email, msg.as_string())
-            print(f"[SUCCESS] Email alert sent to {parent_email} for query '{query}'")
+            print(f"[SUCCESS] High-risk email alert sent to {parent_email} for query '{query}'")
             return True
         except Exception as e:
             print(f"[ERROR] Failed to send email alert to {parent_email}: {e}")
             return False
     else:
-        print(f"[SIMULATED EMAIL ALERT]")
+        print(f"[SIMULATED HIGH-RISK EMAIL ALERT]")
         print(f"  To: {parent_email}")
-        print(f"  Subject: {subject}")
-        print(f"  Child: {child_name} | Query: '{query}' | Category: {category} | Risk: {risk_level} ({confidence}%)")
-        print(f"  Status: Email queued and registered for KidShield parent account ({parent_email}).")
+        print(f"  Query: '{query}' | Category: {category} | Risk: {risk_level} ({confidence}%)")
+        print(f"  Key Words: {key_words}")
+        print(f"  Explanation: {explanation}")
+        print(f"  Suggested Action: {suggested_action}")
         return True
 
 @app.post("/analyze-query")
 async def analyze_query(data: QueryRequest, background_tasks: BackgroundTasks):
     query = data.query
-    result = predict_risk(query)
-    label = result["label"]
-    confidence = round(result["score"] * 100, 2)
+    model_result = predict_risk(query)
+    xai = analyze_with_xai(model_result["label"], query)
 
-    # Risk level categorization according to ai_training dataset rules
-    if label == "Safe":
-        risk_level = "Low"
-    elif label == "Toxic":
-        risk_level = "Medium"
-    elif label == "Cyberbullying":
-        risk_level = "High"
-    elif label == "Hate Speech":
-        risk_level = "High"
-    else:
-        risk_level = "Medium"
+    label = xai["category"]
+    risk_level = xai["risk_level"]
+    key_words = xai["key_words"]
+    explanation = xai["explanation"]
+    suggested_action = xai["suggested_action"]
+    confidence = round(model_result["score"] * 100, 2)
 
-    explanation = generate_explanation(label)
+    # Alert actions by risk level:
+    # Low (Safe) → query logged only
+    # Medium (Toxic, Inappropriate) → dashboard flag + in-app notification
+    # High (Cyberbullying, Hate, Violent) → dashboard flag + immediate email
+    is_flagged = risk_level in ("Medium", "High")
+    should_email = risk_level == "High" and data.send_email
 
     email_sent = False
-    if data.parent_email and data.send_email:
+    if data.parent_email and should_email:
         background_tasks.add_task(
             send_parent_email_alert,
             parent_email=data.parent_email,
@@ -122,7 +131,9 @@ async def analyze_query(data: QueryRequest, background_tasks: BackgroundTasks):
             category=label,
             risk_level=risk_level,
             confidence=confidence,
-            explanation=explanation
+            explanation=explanation,
+            key_words=", ".join(key_words),
+            suggested_action=suggested_action,
         )
         email_sent = True
 
@@ -131,9 +142,12 @@ async def analyze_query(data: QueryRequest, background_tasks: BackgroundTasks):
         "category": label,
         "confidence": confidence,
         "risk_level": risk_level,
+        "is_flagged": is_flagged,
+        "key_words": key_words,
         "explanation": explanation,
+        "suggested_action": suggested_action,
         "email_sent": email_sent,
-        "parent_email": data.parent_email
+        "parent_email": data.parent_email,
     }
 
 @app.post("/send-email")
@@ -146,23 +160,13 @@ async def send_email_endpoint(data: EmailRequest, background_tasks: BackgroundTa
         category=data.category,
         risk_level=data.risk_level,
         confidence=data.confidence,
-        explanation=data.explanation
+        explanation=data.explanation,
+        key_words=data.key_words or "",
+        suggested_action=data.suggested_action or "",
     )
     return {
         "status": "queued",
         "parent_email": data.parent_email,
         "child_name": data.child_name,
-        "category": data.category
+        "category": data.category,
     }
-
-def generate_explanation(label):
-    explanations = {
-        "Safe": "The search appears safe and appropriate according to the AI training dataset.",
-        "Toxic": "The search contains offensive language or toxic phrasing according to the AI training dataset.",
-        "Cyberbullying": "The search may contain bullying, harassment, or targeted attacks according to the AI training dataset.",
-        "Hate Speech": "The search contains hateful or discriminatory content according to the AI training dataset."
-    }
-    return explanations.get(
-        label,
-        "Potential harmful content detected according to the AI training dataset."
-    )
