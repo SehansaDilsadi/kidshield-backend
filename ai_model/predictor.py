@@ -1,10 +1,17 @@
 from transformers import pipeline
 
+_MODEL_PATH = "../trained_models/final_model"
+
 classifier = pipeline(
     "text-classification",
-    model="../trained_models/final_model",
-    tokenizer="../trained_models/final_model"
+    model=_MODEL_PATH,
+    tokenizer=_MODEL_PATH
 )
+
+# Exposed so attribution.py can run Integrated Gradients against the same
+# in-memory model/tokenizer instead of loading a second copy.
+model = classifier.model
+tokenizer = classifier.tokenizer
 
 LABEL_MAP = {
     "LABEL_0": "Safe",
@@ -22,5 +29,6 @@ def predict_risk(text):
 
     return {
         "label": LABEL_MAP.get(label, label),
-        "score": score
+        "score": score,
+        "label_id": model.config.label2id[label],
     }

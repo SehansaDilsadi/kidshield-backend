@@ -3,13 +3,31 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import Depends, FastAPI, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel
 
 from ai_model.predictor import predict_risk
 from ai_model.explainability import analyze_with_xai
 
 app = FastAPI(title="KidShield AI Search Monitoring Service")
+
+API_KEY = os.getenv("KIDSHIELD_API_KEY", "")
+
+
+def verify_api_key(x_api_key: str = Header(default="")):
+    """Gate access with a shared secret so only the KidShield app (which
+    knows the key) can reach these endpoints — this is not per-user auth,
+    just a bar against anyone on the internet finding the URL and calling it."""
+    if not API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server misconfigured: KIDSHIELD_API_KEY is not set.",
+        )
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key.",
+        )
 
 class QueryRequest(BaseModel):
     query: str
@@ -101,11 +119,11 @@ def send_parent_email_alert(
         print(f"  Suggested Action: {suggested_action}")
         return True
 
-@app.post("/analyze-query")
+@app.post("/analyze-query", dependencies=[Depends(verify_api_key)])
 async def analyze_query(data: QueryRequest, background_tasks: BackgroundTasks):
     query = data.query
     model_result = predict_risk(query)
-    xai = analyze_with_xai(model_result["label"], query)
+    xai = analyze_with_xai(model_result["label"], query, model_result["label_id"])
 
     label = xai["category"]
     risk_level = xai["risk_level"]
@@ -150,7 +168,7 @@ async def analyze_query(data: QueryRequest, background_tasks: BackgroundTasks):
         "parent_email": data.parent_email,
     }
 
-@app.post("/send-email")
+@app.post("/send-email", dependencies=[Depends(verify_api_key)])
 async def send_email_endpoint(data: EmailRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(
         send_parent_email_alert,

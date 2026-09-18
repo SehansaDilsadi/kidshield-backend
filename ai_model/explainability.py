@@ -84,11 +84,31 @@ def refine_category(model_label: str, query: str) -> str:
     return model_label
 
 
-def extract_key_words(query: str, category: str) -> List[str]:
-    """Identify influential words that drove the classification."""
+def extract_key_words(query: str, category: str, label_id: int = None) -> List[str]:
+    """Identify influential words that drove the classification.
+
+    Prefers model-derived attribution (Integrated Gradients) and only falls
+    back to the hardcoded keyword dictionary if attribution isn't available
+    or found no token with a strong enough signal.
+    """
     if category == "Safe":
         return []
 
+    if label_id is not None:
+        try:
+            from .attribution import get_token_attributions
+            attributed = get_token_attributions(query, label_id)
+            if attributed:
+                return attributed
+        except Exception:
+            pass  # torch/captum unavailable or inference failed — use fallback below
+
+    return _extract_key_words_by_dictionary(query, category)
+
+
+def _extract_key_words_by_dictionary(query: str, category: str) -> List[str]:
+    """Fallback: keyword-dictionary matching (used when model attribution
+    is unavailable or inconclusive)."""
     lower = query.lower()
     primary = CATEGORY_KEYWORDS.get(category, [])
     found: List[str] = []
@@ -124,9 +144,9 @@ def generate_explanation(category: str, key_words: List[str]) -> str:
     )
 
 
-def analyze_with_xai(model_label: str, query: str) -> dict:
+def analyze_with_xai(model_label: str, query: str, label_id: int = None) -> dict:
     category = refine_category(model_label, query)
-    key_words = extract_key_words(query, category)
+    key_words = extract_key_words(query, category, label_id)
     risk_level = get_risk_level(category)
     explanation = generate_explanation(category, key_words)
     suggested_action = get_suggested_action(category)
