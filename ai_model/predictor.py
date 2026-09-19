@@ -1,6 +1,6 @@
 from transformers import pipeline
 
-_MODEL_PATH = "../trained_models/final_model"
+_MODEL_PATH = "SehansaDilsadi/kidshield-distilbert"
 
 classifier = pipeline(
     "text-classification",
